@@ -12,7 +12,6 @@ const StatusToggle = forwardRef((props, ref) => {
     3: 'Failed to save.'
   };
 
-  // TODO: update logic - bulk save in the backend
   useImperativeHandle(ref, () => {
     return {
       updateSaveStatus: (status) => {

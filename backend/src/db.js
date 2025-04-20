@@ -2,38 +2,51 @@ const mysql = require('mysql2');
 
 // Create a connection pool
 const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'your_user',
-  password: 'your_password',
-  database: 'your_database',
+  host: process.env.SQL_HOST,
+  user: process.env.SQL_USER,
+  password: process.env.SQL_PWD,
+  database: process.env.SQL_DB,
+  port: process.env.SQL_PORT,
   waitForConnections: true, // Wait for a connection instead of erroring out
-  connectionLimit: 10, // Maximum number of connections to pool
-  queueLimit: 0 // Unlimited queue size (optional)
+  connectionLimit: process.env.SQL_CONN_LIMIT, // Maximum number of connections to pool
+  queueLimit: process.env.SQL_QUEUE_LIMIT // Unlimited queue size (optional)
 });
 
 // Using pool to execute queries
 const promisePool = pool.promise();
 
-// TODO: single transaction
-const insertIntoDB = async (data) => {
+// Insert single messages (autocommit)
+const insertIntoDB = async (id, message) => {
   const connection = await promisePool.getConnection();
-  let result;
+  let status = 0;
   try {
-    const insertSql = 'INSERT IGNORE INTO customers (name, email) VALUES (?, ?)';
-    const insertValues = ['John Doe', 'john.doe@example.com'];
-    result = await connection.execute(insertSql, insertValues);
-    console.log('Insert result:', result);
+    const insertSql = 'INSERT IGNORE INTO UserEdits (ID, message) VALUES (?, ?)';
+    const [result, _] = await connection.execute(insertSql, [id, message]);
+    status = result.affectedRows;
+  } catch (error) {
+    console.log(error);
+    status = -1;
+  } finally {
+    connection.release();
+  }
+
+  return status;
+};
+
+// Read persisted messages from DB
+const readFromDB = async () => {
+  const connection = await promisePool.getConnection();
+  let result = [];
+  try {
+    const selectSql = 'SELECT * FROM mysql.UserEdits';
+    const [messages, _] = await connection.execute(selectSql);
+    result = messages;
   } catch (error) {
     console.log(error);
   } finally {
-    connection.release(); // Release connection back to the pool
-    return result;
+    connection.release();
   }
-};
 
-const readFromDB = async () => {
-  result = null;
-  console.log('Read result');
   return result;
 };
 

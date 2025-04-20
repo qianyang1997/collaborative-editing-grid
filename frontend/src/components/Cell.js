@@ -2,7 +2,7 @@
 import React, { useState, useContext, useRef, forwardRef, useImperativeHandle } from 'react';
 import { DataContext } from '../context/DataContext';
 
-const Cell = forwardRef(({ rowKey, columnKey, value }, ref) => {
+const Cell = forwardRef(({ conflictHandler, rowKey, columnKey, value }, ref) => {
   const [cellValue, setCellValue] = useState(value);
   const [lastCellValue, setLastCellValue] = useState(value);
   const { saveCellValue } = useContext(DataContext);
@@ -31,13 +31,19 @@ const Cell = forwardRef(({ rowKey, columnKey, value }, ref) => {
 
   useImperativeHandle(ref, () => {
     return {
-      updateCellValue: (rk, ck, value) => {
+      updateCellValue: (value) => {
         if (!isEditing) {
-          console.log('updating cell value', rk, ck, value);
+          // Update cell value if cell is not actively edited
           setCellValue(value);
         } else {
-          // TODO: cell changed by others while user is actively editing. Conflict resolution
+          // Generate pop up to resolve conflict is cell is actively edited
+          conflictHandler(rowKey, columnKey, value);
         }
+      },
+
+      overrideCellValue: (value) => {
+        // Force update cell value regardless of edit status
+        setCellValue(value);
       }
     };
   }, [isEditing, rowKey, columnKey]);

@@ -1,32 +1,18 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const { CHANNEL, pub, listenForMessage, saveMessage } = require('./message');
+const { CHANNEL, pub, listenForMessage, saveMessage, readInitialBatch } = require('./message');
+
+const SAVE_INTERVAL = Number(process.env.REDIS_SAVE_INTERVAL);
+const PORT = Number(process.env.PORT);
 
 // HTTP server
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  const { method, url } = req;
 
-  if (url === '/api/health') {
+  // Health check
+  if (req.url === '/api/health') {
     res.status(200);
     res.end(JSON.stringify({ status: 200 }));
-    //   } else if (url === '/api/edit') {
-    //     switch (method) {
-    //       case 'GET':
-    //         handleGetEdit(req, res);
-    //         break;
-    //       case 'POST':
-    //         handlePostEdit(req, res);
-    //         break;
-    //       default:
-    //         res.status(404);
-    //         res.end(
-    //           JSON.stringify({
-    //             status: 404,
-    //             message: `Method ${method} not available for endpoint ${url}.`
-    //           })
-    //         );
-    //     }
   } else {
     res.status(404);
     res.end(JSON.stringify({ status: 404, message: `Endpoint ${url} not found.` }));
@@ -43,40 +29,19 @@ ws.on('connection', (socket, req) => {
   // Subscribe to Redis messages
   listenForMessage(ws, socket, clientId);
 
+  // Get initial batch of data from DB and in-memory store
+  readInitialBatch(socket);
+
   // Broadcast new client status to active clients
   pub.xadd(
     CHANNEL,
     '*',
     'data',
-    JSON.stringify({ type: 'USER', payload: { status: 'open', user: clientId } })
+    JSON.stringify({
+      type: 'USER',
+      payload: { status: 'open', user: clientId, timestamp: new Date().toISOString() }
+    })
   );
-
-  // Query latest edits from Redis message queue
-  pub.xrange(CHANNEL, '-', '+').then((queue_data) => {
-    let edit_data = {};
-    let user_data = {};
-
-    queue_data.forEach(([key, [_, value]]) => {
-      const parsedValue = JSON.parse(value);
-      if (parsedValue.type === 'USER') {
-        if (parsedValue.payload.status === 'open') {
-          user_data[parsedValue.payload.user] = parsedValue.payload;
-        } else {
-          delete user_data[parsedValue.payload.user];
-        }
-      } else if (parsedValue.type === 'EDIT') {
-        const { rowKey, columnKey, value, user } = parsedValue.payload;
-        edit_data[`${rowKey}-${columnKey}`] = { value, user, id: key };
-      }
-    });
-
-    socket.send(
-      JSON.stringify({ type: 'DATA', payload: { data_type: 'user', message: user_data } })
-    );
-    socket.send(
-      JSON.stringify({ type: 'DATA', payload: { data_type: 'data', message: edit_data } })
-    );
-  });
 
   // Broadcast user message to all active users
   socket.on('message', (data) => {
@@ -107,16 +72,23 @@ ws.on('connection', (socket, req) => {
       CHANNEL,
       '*',
       'data',
-      JSON.stringify({ type: 'USER', payload: { status: 'closed', user: clientId } })
+      JSON.stringify({
+        type: 'USER',
+        payload: { status: 'closed', user: clientId, timestamp: new Date().toISOString() }
+      })
     );
   });
 });
 
-// TODO - run on schedule
+// Persist message queue to DB on schedule
 setInterval(() => {
-  saveMessage();
-}, 1000000);
+  saveMessage().then((data) => {
+    if (data) {
+      console.log(data);
+    }
+  });
+}, SAVE_INTERVAL);
 
-server.listen(5001, '0.0.0.0', () => {
-  console.log('Server listening on port 5001.');
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on port ${PORT}.`);
 });

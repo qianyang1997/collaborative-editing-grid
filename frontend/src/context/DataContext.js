@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { createContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useEffect, useRef, useState } from 'react';
 import { BACKEND_URL } from '../constants/settings';
 
 const DataContext = createContext();
@@ -10,9 +10,9 @@ const DataProvider = ({ children }) => {
   const statusToggleRef = useRef(null);
   const cellRefs = useRef({});
 
-  const handleCellRender = (isPending) => {
+  const handleCellRender = useCallback((isPending) => {
     setIsPending(isPending);
-  }
+  }, []);
 
   useEffect(() => {
     // Skip websocket setup if cells are not rendered
@@ -25,7 +25,6 @@ const DataProvider = ({ children }) => {
     };
 
     ws.current.onmessage = (e) => {
-
       const data = JSON.parse(e.data);
       console.log(data);
       switch (data.type) {
@@ -43,26 +42,19 @@ const DataProvider = ({ children }) => {
           if (data.payload.data_type === 'user') {
             // TODO: Populate active users upon initial sign in
             // setInitialUsers(data.payload.message);
-
           } else if (data.payload.data_type === 'data') {
             // Populate current data upon initial sign in
             Object.entries(data.payload.message).forEach(([key, valueMap]) => {
-              const [rowKey, columnKey] = key.split('-');
-              console.log(rowKey, columnKey);
-              cellRefs.current[key].updateCellValue(rowKey, columnKey, valueMap.value);
+              cellRefs.current[key].updateCellValue(valueMap.value);
             });
           }
           break;
         case 'EDIT':
           cellRefs.current[`${data.payload.rowKey}-${data.payload.columnKey}`].updateCellValue(
-            data.payload.rowKey,
-            data.payload.columnKey,
             data.payload.value
           );
           break;
         case 'SAVE':
-          console.log("save status", data.payload.status);
-          // TODO: update status toggle status
           if (data.payload.status === 200) {
             statusToggleRef.current.updateSaveStatus(1);
           } else {
@@ -95,18 +87,18 @@ const DataProvider = ({ children }) => {
     ws.current.send(
       JSON.stringify({
         type: 'EDIT',
-        payload: { rowKey, columnKey, value } // TODO: add user
+        payload: { rowKey, columnKey, value }
       })
     );
   };
 
   return (
-    <DataContext.Provider value={{ getCellValue, saveCellValue, cellRefs, statusToggleRef, handleCellRender }}>
+    <DataContext.Provider
+      value={{ getCellValue, saveCellValue, cellRefs, statusToggleRef, handleCellRender }}
+    >
       {children}
     </DataContext.Provider>
   );
 };
 
 export { DataContext, DataProvider };
-
-// search bar
