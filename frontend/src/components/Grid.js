@@ -6,7 +6,7 @@ import { DEFAULT_DIMENSIONS } from '../constants/settings';
 import './style/Grid.css';
 
 const Grid = () => {
-  const { cellRefs, statusToggleRef, handleCellRender } = useContext(DataContext);
+  const { cellRefs, statusToggleRef, handleCellRender, error } = useContext(DataContext);
   const [rows, cols] = DEFAULT_DIMENSIONS;
   const [conflict, setConflict] = useState(null);
 
@@ -46,6 +46,19 @@ const Grid = () => {
       );
     }
     tableRows.push(<tr key={i}>{tableCells}</tr>);
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h2>Error</h2>
+        <p>
+          One or more backend systems are down. We apologize for the inconvenience. Please check
+          back later.
+        </p>
+        <p>Error message: {error}</p>
+      </div>
+    );
   }
 
   return (

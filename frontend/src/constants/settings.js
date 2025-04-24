@@ -1,3 +1,4 @@
+// TODO
 const BACKEND_URL = 'localhost:5001';
 
 const DEFAULT_DIMENSIONS = [10, 10];

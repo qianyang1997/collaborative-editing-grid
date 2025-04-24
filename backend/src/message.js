@@ -1,14 +1,150 @@
 const Redis = require('ioredis');
-const { insertIntoDB, readFromDB } = require('./db');
+const { insertIntoDB, readFromDB, checkDBHealth } = require('./db');
+const { broadcastSystemError } = require('./util');
 
 const CHANNEL = process.env.REDIS_CHANNEL;
 const SAVE_TIMEOUT = Number(process.env.REDIS_SAVE_TIMEOUT);
 const MAXLEN = Number(process.env.REDIS_MAXLEN);
+const RETRY_LIMIT = Number(process.env.REDIS_RETRY_LIMIT);
+const MAX_RETRY_INTERVAL = Number(process.env.REDIS_MAX_RETRY_INTERVAL);
+
+const REDIS_CONFIG = {
+  maxRetriesPerRequest: RETRY_LIMIT,
+  retryStrategy: (times) => {
+    if (times > RETRY_LIMIT) {
+      console.warn('Too many retries, giving up.');
+      return null;
+    }
+    return Math.min(times * 100, MAX_RETRY_INTERVAL);
+  }
+};
 
 // Redis message queue
-const pub = new Redis();
-const sub = new Redis();
-const save = new Redis();
+const pub = new Redis(REDIS_CONFIG);
+const sub = new Redis(REDIS_CONFIG);
+const save = new Redis(REDIS_CONFIG);
+
+// Check Redis connection
+const checkRedisHealth = async () => {
+  try {
+    const result = await pub.ping();
+    return result === 'PONG';
+  } catch (error) {
+    console.error('Redis ping failed:', error.message);
+    return false;
+  }
+};
+
+// Share Redis & DB health status
+const checkHealthStatus = async () => {
+  let status = 'success';
+  let failedServices = [];
+
+  const [redisStatus, dbStatus] = await Promise.all([checkRedisHealth(), checkDBHealth()]);
+  if (!redisStatus) {
+    status = 'error';
+    failedServices.push('redis');
+  }
+  if (!dbStatus) {
+    status = 'error';
+    failedServices.push('mysql');
+  }
+  return {
+    status,
+    failedServices,
+    message: `One or more backend services are down. Failed services: ${failedServices}.`
+  };
+};
+
+// Log client open status
+const addNewClient = async (clientId) => {
+  // Broadcast client status to all active users
+  pub.xadd(
+    CHANNEL,
+    '*',
+    'data',
+    JSON.stringify({
+      type: 'USER',
+      payload: { status: 'open', user: clientId, timestamp: new Date().toISOString() }
+    })
+  );
+};
+
+// Log client closed status
+const dropClosedClient = async (clientId) => {
+  // Redis & DB health check
+  const healthCheck = await checkHealthStatus();
+
+  // If mysql and/or redis is down, log error
+  if (healthCheck.status === 'error') {
+    const { failedServices } = healthCheck;
+    if (failedServices.includes('mysql') && !failedServices.includes('redis')) {
+      // if mysql down but redis ready, log error status to redis
+      pub.xadd(
+        CHANNEL,
+        '*',
+        'data',
+        JSON.stringify({
+          type: 'USER',
+          payload: {
+            status: 'error',
+            user: clientId,
+            timestamp: new Date().toISOString(),
+            message: 'Client session failed due to mysql server'
+          }
+        })
+      );
+    } else if (failedServices.includes('redis') && !failedServices.includes('mysql')) {
+      // if redis is down but mysql is ready, add client closed status to DB to ensure data consistency when system goes back up
+      const id = `ERROR__${clientId}`;
+      const message = JSON.stringify({
+        type: 'USER',
+        payload: {
+          status: 'error',
+          user: clientId,
+          timestamp: new Date().toISOString(),
+          message: `Client session failed due to Redis server`
+        }
+      });
+      const status = await insertIntoDB(id, message);
+      console.log('Inserting client closed status due to Redis shutdown. Status:', status);
+    } else {
+      // if both services are down, TODO
+    }
+
+    return;
+  }
+
+  // If backend services are running, broadcast client status to all active users
+  pub.xadd(
+    CHANNEL,
+    '*',
+    'data',
+    JSON.stringify({
+      type: 'USER',
+      payload: { status: 'closed', user: clientId, timestamp: new Date().toISOString() }
+    })
+  );
+};
+
+// Add message to message queue
+const addNewMessage = async (message, wsClient) => {
+  if (pub.status !== 'ready') {
+    // Close client session if Redis is down
+    broadcastSystemError(wsClient, 'Redis server is not available.');
+  } else {
+    // Broadcast message to all active users
+    pub
+      .xadd(CHANNEL, '*', 'data', JSON.stringify(message))
+      // Send message save status back to client
+      .then((id) => {
+        wsClient.send(JSON.stringify({ type: 'SAVE', payload: { id, status: 200 } }));
+      })
+      .catch((error) => {
+        wsClient.send(JSON.stringify({ type: 'SAVE', payload: { error, status: 400 } }));
+      });
+  }
+};
 
 // Subscribe to new Redis messages
 const listenForMessage = async (wsServer, wsClient, clientId, lastId = '$') => {
@@ -16,6 +152,12 @@ const listenForMessage = async (wsServer, wsClient, clientId, lastId = '$') => {
 
   // Stop subscription if client is closed
   if (wsClient.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  // Stop client server if Redis is down
+  if (sub.status !== 'ready') {
+    broadcastSystemError(wsServer, 'Redis server is not available.');
     return;
   }
 
@@ -36,6 +178,10 @@ const listenForMessage = async (wsServer, wsClient, clientId, lastId = '$') => {
 
 // Save batches of data to permanent storage
 const saveMessage = async (lastId = '0') => {
+  // Redis & DB health check
+  const healthCheck = await checkHealthStatus();
+  if (healthCheck.status === 'error') return healthCheck;
+
   // Read all messages within a TIMEOUT block
   const results = await save.xread('BLOCK', SAVE_TIMEOUT, 'STREAMS', CHANNEL, lastId);
   if (!results) return;
@@ -90,7 +236,9 @@ const processMessage = (key, value, user_data, edit_data) => {
 };
 
 const readInitialBatch = async (socket) => {
-  console.log('Reading initial batch');
+  // Redis & DB health check
+  const healthCheck = await checkHealthStatus();
+  if (healthCheck.status === 'error') return healthCheck;
 
   let edit_data = {};
   let user_data = {};
@@ -120,12 +268,15 @@ const readInitialBatch = async (socket) => {
 
   socket.send(JSON.stringify({ type: 'DATA', payload: { data_type: 'user', message: user_data } }));
   socket.send(JSON.stringify({ type: 'DATA', payload: { data_type: 'data', message: edit_data } }));
+
+  return { status: 'success' };
 };
 
 module.exports = {
-  CHANNEL,
-  pub,
-  sub,
+  checkRedisHealth,
+  addNewClient,
+  dropClosedClient,
+  addNewMessage,
   listenForMessage,
   saveMessage,
   readInitialBatch

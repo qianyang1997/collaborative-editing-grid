@@ -6,6 +6,7 @@ const DataContext = createContext();
 
 const DataProvider = ({ children }) => {
   const [isPending, setIsPending] = useState(true);
+  const [error, setError] = useState(null);
   const ws = useRef(null);
   const statusToggleRef = useRef(null);
   const cellRefs = useRef({});
@@ -61,16 +62,21 @@ const DataProvider = ({ children }) => {
             statusToggleRef.current.updateSaveStatus(2);
           }
           break;
+        case 'SYSTEM_ERROR':
+          setError(data.payload.message);
+          break;
         default:
       }
     };
 
     ws.current.onerror = (error) => {
-      console.log('Websocket error observed:', error);
+      alert('Connection error: Unable to reach server.');
+      setError(`Websocket error observed: ${error.message}.`);
     };
 
     ws.current.onclose = () => {
-      console.log('Connection to websocket closed.');
+      alert('Server is shutting down. You session is closed.');
+      setError('Connection to websocket closed.');
     };
 
     return () => {
@@ -83,6 +89,7 @@ const DataProvider = ({ children }) => {
   const saveCellValue = (rowKey, columnKey, value) => {
     // Set status to "Saving"
     statusToggleRef.current.updateSaveStatus(0);
+
     // Send new edits to backend
     ws.current.send(
       JSON.stringify({
@@ -94,7 +101,7 @@ const DataProvider = ({ children }) => {
 
   return (
     <DataContext.Provider
-      value={{ getCellValue, saveCellValue, cellRefs, statusToggleRef, handleCellRender }}
+      value={{ getCellValue, saveCellValue, cellRefs, statusToggleRef, handleCellRender, error }}
     >
       {children}
     </DataContext.Provider>

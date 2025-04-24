@@ -1,9 +1,22 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const { CHANNEL, pub, listenForMessage, saveMessage, readInitialBatch } = require('./message');
+const {
+  listenForMessage,
+  saveMessage,
+  readInitialBatch,
+  addNewClient,
+  dropClosedClient,
+  addNewMessage
+} = require('./message');
+const { broadcastSystemError } = require('./util');
 
 const SAVE_INTERVAL = Number(process.env.REDIS_SAVE_INTERVAL);
 const PORT = Number(process.env.PORT);
+
+// Handle Redis or DB connection errors not caught by try-catch blocks
+process.on('unhandledRejection', (reason, _) => {
+  console.error('🔴 Unhandled Promise Rejection:', reason);
+});
 
 // HTTP server
 const server = http.createServer((req, res) => {
@@ -30,18 +43,14 @@ ws.on('connection', (socket, req) => {
   listenForMessage(ws, socket, clientId);
 
   // Get initial batch of data from DB and in-memory store
-  readInitialBatch(socket);
-
-  // Broadcast new client status to active clients
-  pub.xadd(
-    CHANNEL,
-    '*',
-    'data',
-    JSON.stringify({
-      type: 'USER',
-      payload: { status: 'open', user: clientId, timestamp: new Date().toISOString() }
-    })
-  );
+  readInitialBatch(socket).then((data) => {
+    if (data.status === 'error') {
+      broadcastSystemError(socket, data.message);
+    } else {
+      // Broadcast new client status to active clients
+      addNewClient(clientId);
+    }
+  });
 
   // Broadcast user message to all active users
   socket.on('message', (data) => {
@@ -50,43 +59,37 @@ ws.on('connection', (socket, req) => {
     if (parsedData.type == 'EDIT') {
       // Publish to Redis queue
       parsedData.payload.user = clientId;
-      pub
-        .xadd(CHANNEL, '*', 'data', JSON.stringify(parsedData))
-        // Update save status and send back to client
-        .then((id) => {
-          socket.send(JSON.stringify({ type: 'SAVE', payload: { id, status: 200 } }));
-        })
-        .catch((error) => {
-          socket.send(JSON.stringify({ type: 'SAVE', payload: { error, status: 400 } }));
-        });
+      addNewMessage(parsedData, socket);
     }
   });
 
   socket.on('error', (error) => {
-    console.log(error);
+    console.error(error);
   });
 
   // Broadcast client offline status to all active users
   socket.on('close', () => {
-    pub.xadd(
-      CHANNEL,
-      '*',
-      'data',
-      JSON.stringify({
-        type: 'USER',
-        payload: { status: 'closed', user: clientId, timestamp: new Date().toISOString() }
-      })
-    );
+    dropClosedClient(clientId);
   });
 });
 
 // Persist message queue to DB on schedule
 setInterval(() => {
-  saveMessage().then((data) => {
-    if (data) {
-      console.log(data);
-    }
-  });
+  saveMessage()
+    .then((data) => {
+      if (data) {
+        console.log('Message save status:', data);
+        // If Redis is down, close client sessions one by one
+        if (data.status === 'error' && data.failedServices.includes('redis')) {
+          ws.clients.forEach((client) => {
+            broadcastSystemError(client, data.message);
+          });
+        }
+      }
+    })
+    .catch((error) => {
+      console.error('Message save error:', error.message);
+    });
 }, SAVE_INTERVAL);
 
 server.listen(PORT, '0.0.0.0', () => {
