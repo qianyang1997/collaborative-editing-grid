@@ -1,5 +1,7 @@
 const mysql = require('mysql2');
 
+const TABLE_NAME = process.env.SQL_TABLE_NAME;
+
 // Create a connection pool
 const pool = mysql.createPool({
   host: process.env.SQL_HOST,
@@ -60,7 +62,7 @@ const readFromDB = async () => {
   try {
     connection = await promisePool.getConnection();
     // TODO: backend process to preserve only active users and latest edits; move the rest to another DB if needed
-    const selectSql = 'SELECT * FROM mysql.UserEdits';
+    const selectSql = `SELECT * FROM ${TABLE_NAME}`;
     const [messages, _] = await connection.execute(selectSql);
     result = messages;
   } catch (error) {

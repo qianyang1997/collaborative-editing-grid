@@ -1,6 +1,7 @@
 const Redis = require('ioredis');
 const { insertIntoDB, readFromDB, checkDBHealth } = require('./db');
 const { broadcastSystemError } = require('./util');
+const { addToInMemoryLog, persistInMemoryLogToDB, inMemoryLog } = require('./memory');
 
 const CHANNEL = process.env.REDIS_CHANNEL;
 const SAVE_TIMEOUT = Number(process.env.REDIS_SAVE_TIMEOUT);
@@ -9,11 +10,13 @@ const RETRY_LIMIT = Number(process.env.REDIS_RETRY_LIMIT);
 const MAX_RETRY_INTERVAL = Number(process.env.REDIS_MAX_RETRY_INTERVAL);
 
 const REDIS_CONFIG = {
-  maxRetriesPerRequest: RETRY_LIMIT,
+  // Retries indefinitely
+  maxRetriesPerRequest: null,
+
+  // Uses a capped exponential backoff retry strategy
   retryStrategy: (times) => {
     if (times > RETRY_LIMIT) {
-      console.warn('Too many retries, giving up.');
-      return null;
+      return MAX_RETRY_INTERVAL;
     }
     return Math.min(times * 100, MAX_RETRY_INTERVAL);
   }
@@ -24,15 +27,25 @@ const pub = new Redis(REDIS_CONFIG);
 const sub = new Redis(REDIS_CONFIG);
 const save = new Redis(REDIS_CONFIG);
 
+// Log redis connection status
+pub.on('ready', () => {
+  console.log('Redis connection is ready.');
+});
+
+pub.on('connect', () => {
+  console.log('Connected to Redis.');
+});
+
+pub.on('reconnecting', (time) => {
+  console.log(`Reconnecting to Redis in ${time}ms...`);
+});
+
 // Check Redis connection
 const checkRedisHealth = async () => {
-  try {
-    const result = await pub.ping();
-    return result === 'PONG';
-  } catch (error) {
-    console.error('Redis ping failed:', error.message);
+  if (pub.status != 'ready') {
     return false;
   }
+  return true;
 };
 
 // Share Redis & DB health status
@@ -78,8 +91,9 @@ const dropClosedClient = async (clientId) => {
   // If mysql and/or redis is down, log error
   if (healthCheck.status === 'error') {
     const { failedServices } = healthCheck;
+
     if (failedServices.includes('mysql') && !failedServices.includes('redis')) {
-      // if mysql down but redis ready, log error status to redis
+      // If mysql is down but redis ready, broadcast error status to redis
       pub.xadd(
         CHANNEL,
         '*',
@@ -95,7 +109,7 @@ const dropClosedClient = async (clientId) => {
         })
       );
     } else if (failedServices.includes('redis') && !failedServices.includes('mysql')) {
-      // if redis is down but mysql is ready, add client closed status to DB to ensure data consistency when system goes back up
+      // If redis is down but mysql is ready, add client error status to DB to ensure data consistency when system goes back up
       const id = `ERROR__${clientId}`;
       const message = JSON.stringify({
         type: 'USER',
@@ -107,9 +121,24 @@ const dropClosedClient = async (clientId) => {
         }
       });
       const status = await insertIntoDB(id, message);
-      console.log('Inserting client closed status due to Redis shutdown. Status:', status);
+      console.log('Inserting client error to DB due to Redis shutdown. Insert status:', status);
     } else {
-      // if both services are down, TODO
+      // If both services are down, log client error session to in-memory store
+      const id = `ERROR__${clientId}`;
+      const message = JSON.stringify({
+        type: 'USER',
+        payload: {
+          status: 'error',
+          user: clientId,
+          timestamp: new Date().toISOString(),
+          message: `Client session failed; both redis and mysql are unavailable`
+        }
+      });
+      addToInMemoryLog(id, message);
+      console.log(
+        'Both redis and mysql are down. Adding client error status to in-memory log:',
+        id
+      );
     }
 
     return;
@@ -180,6 +209,14 @@ const listenForMessage = async (wsServer, wsClient, clientId, lastId = '$') => {
 const saveMessage = async (lastId = '0') => {
   // Redis & DB health check
   const healthCheck = await checkHealthStatus();
+
+  // If DB is on and in-memory log is not empty, persist to DB
+  if (healthCheck.status !== 'error' || !healthCheck.failedServices.includes('mysql')) {
+    const saveStatus = await persistInMemoryLogToDB();
+    if (saveStatus) console.log('Persist in-memory log to DB:', saveStatus);
+  }
+
+  // If health check fails, return error
   if (healthCheck.status === 'error') return healthCheck;
 
   // Read all messages within a TIMEOUT block
@@ -243,27 +280,35 @@ const readInitialBatch = async (socket) => {
   let edit_data = {};
   let user_data = {};
 
-  // Get DB and message queue data
+  // Get DB, message queue, and in-memory data
+  // Copy in-memory log first to tackle the edge case where in-memory data is truncated after DB data is pulled
+  const in_memory_data = [...Object.values(inMemoryLog)];
   const [db_data, queue_data] = await Promise.all([readFromDB(), pub.xrange(CHANNEL, '-', '+')]);
 
   let last_id;
 
   // Query messages from DB
   db_data
+    // Note that all the ERROR logs prefixed with `ERROR__` are placed after Redis entries.
+    // This ensures all the users that had force shutdowns are properly closed out.
     .sort((a, b) => a.ID - b.ID)
     .forEach((message) => {
-      last_id = message.ID;
+      if (!message.ID.startsWith('ERROR__')) last_id = message.ID;
       processMessage(message.ID, message.message, user_data, edit_data);
     });
 
   // Query messages from Redis message queue
   queue_data.forEach(([key, [_, value]]) => {
-    // If key already exists in DB, skip
-    if (key <= last_id) {
-      return;
-    }
+    // If key already exists in DB, then it is already processed above. Skip
+    if (key <= last_id) return;
 
     processMessage(key, value, user_data, edit_data);
+  });
+
+  // Query in-memory log
+  in_memory_data.forEach((data) => {
+    // Close out users that had forced shutdowns due to network error
+    processMessage(_, data, user_data, edit_data);
   });
 
   socket.send(JSON.stringify({ type: 'DATA', payload: { data_type: 'user', message: user_data } }));

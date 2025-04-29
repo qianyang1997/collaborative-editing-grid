@@ -34,7 +34,7 @@ const DataProvider = ({ children }) => {
             // TODO: Add user icon at top
             console.log(`${data.payload.user} is now online!`);
           }
-          if (data.payload.status === 'closed') {
+          if (data.payload.status !== 'open') {
             // TODO: drop user icon
             console.log(`${data.payload.user} went offline.`);
           }
