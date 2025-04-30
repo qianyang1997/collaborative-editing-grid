@@ -1,0 +1,46 @@
+version: '3'
+services:
+  # Frontend service (React)
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: "localhost:5001"
+    ports:
+      - "3000:80"  # Expose port 3000 on host to port 80 on the container
+    depends_on:
+      - backend  # Make sure the backend starts before frontend
+    environment:
+      REACT_APP_BACKEND_URL: "http://backend:5001"
+
+  # Backend service (Node.js)
+  backend:
+    build: ./backend  # Path to your backend directory
+    ports:
+      - "5001:5001"  # Expose port 5001 on host to port 5001 on the container
+    environment:
+      SQL_HOST: "host.docker.internal"
+      SQL_PORT: "3307"
+      SQL_USER: "root"
+      SQL_PWD: "root"
+      SQL_DB: "mysql"
+      SQL_CONN_LIMIT: "10"
+      SQL_QUEUE_LIMIT: "0"
+      SQL_TABLE_NAME: "mysql.UserEdits"
+      REDIS_HOST: "host.docker.internal"
+      REDIS_PORT: "6379"
+      REDIS_CHANNEL: "ioredis_channel"
+      REDIS_SAVE_TIMEOUT: "5000"
+      REDIS_MAXLEN: "1"
+      REDIS_SAVE_INTERVAL: "10000"
+      REDIS_RETRY_LIMIT: "3"
+      REDIS_MAX_RETRY_INTERVAL: "5000"
+      HEALTH_CHECK_INTERVAL: "10000"
+      PORT: "5001"
+  # db:
+  #   image: mysql:latest
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: root_password
+  #     MYSQL_DATABASE: mysql
+  #   ports:
+  #     - "3306:3306"

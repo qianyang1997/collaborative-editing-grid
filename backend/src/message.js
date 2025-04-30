@@ -4,12 +4,17 @@ const { broadcastSystemError } = require('./util');
 const { addToInMemoryLog, persistInMemoryLogToDB, inMemoryLog } = require('./memory');
 
 const CHANNEL = process.env.REDIS_CHANNEL;
+const HOST = process.env.REDIS_HOST;
+const PORT = process.env.REDIS_PORT;
 const SAVE_TIMEOUT = Number(process.env.REDIS_SAVE_TIMEOUT);
 const MAXLEN = Number(process.env.REDIS_MAXLEN);
 const RETRY_LIMIT = Number(process.env.REDIS_RETRY_LIMIT);
 const MAX_RETRY_INTERVAL = Number(process.env.REDIS_MAX_RETRY_INTERVAL);
 
 const REDIS_CONFIG = {
+  host: HOST,
+  port: PORT,
+
   // Retries indefinitely
   maxRetriesPerRequest: null,
 
