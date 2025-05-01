@@ -20,23 +20,23 @@ You can deploy this system on any cloud / on-prem platform. The architecture use
 
 ### System Failure Scenarios
 
-Backend server fails:
+**Backend server fails:**
 - **If client establishes a new connection:** Frontend shows error; session is not created.
 - **If client is in an active session:** User session terminates immediately.
 - **Recovery:** Active user sessions must be manually marked as errored in the DB before recovery.
 
-Database (MySQL) fails:
+**Database (MySQL) fails:**
 - **If client establishes a new connection:** Fails immediately with error; session is not established; Redis logs failed connection attempt
 - **If client is in an active session:** Can continue editing. Changes queue in Redis until DB is back online.
 - **Recovery:** When DB recovers, queued changes auto-sync from Redis to DB.
 
-Redis fails:
+**Redis fails:**
 - **If client establishes a new connection:** Fails with error; session rejected and failed connection attempt logged to DB.
 - **If client is in an active session:** Client session errors out; error gets logged to DB.
 - **Edge case:** Client started a session, but session open status is not yet persisted to DB. Meanwhile, Redis loses connection and client session errors out. The error is persisted to DB. In this case, some active clients may only have 'error' status in the DB.
 - **Recovery**: On reconnection, all items in Redis stream would be persisted to DB.
   
-Both mysql and Redis fail:
+**Both mysql and Redis fail:**
 - **If client establishes a new connection:** Fails with error; session rejected and failed connection attempt logged to the backend server's in-memory store.
 - **If client is in an active session:** Client session errors out; error gets logged to the backend server's in-memory store.
 - **Recovery:** Once both Redis and DB are restored, reconnection and data sync are attempted automatically. Logs in in-memory store would persist to DB.
@@ -45,9 +45,16 @@ Both mysql and Redis fail:
 
 This system is designed for distributed deployment (e.g., Kubernetes, AWS ECS/EKS, GCP, RDS). However, it can also run locally using Docker.
 
-To run the application locally, build and start the app with `docker-compose up --build` in the root directory of the project. Then, access the app by visiting `http://localhost:3000`.
+To run the application locally, build and start the app with:
+```bash
+docker-compose up --build
+```
+Then, access the app by visiting `http://localhost:3000`.
 
-To tear down the Docker containers and volumes, run `docker-compose down -v`.
+To tear down the Docker containers and volumes, run:
+```bash
+docker-compose down -v
+```
 
 ### Environment Variable Configuration
 
