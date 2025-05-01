@@ -1,53 +1,80 @@
 # React Collaborative Editing Grid
 
-This project is a sample design for a grid with collaborative editing capabilities on a distributed system.
+This project demonstrates a real-time collaborative editing grid designed for distributed systems. It features a scalable architecture using a React frontend, Node.js backend, Redis stream for message synchronization, and MySQL for persistent storage.
 
-Assuming client <> server are many-to-many, and all client activities need to be communicated to all other clients across servers.
+The system assumes a many-to-many client-server relationship, where all user activity is broadcast to all other users across servers in real time.
 
-The current codebase is run locally. You can modify the env variables to deploy it online through any cloud / on-prem platform. The architecture uses a react frontend, node.js backend, Redis stream, and mysql database (you can also swap out these components with any other language / framework that achieves the same outcome).
+You can deploy this system on any cloud / on-prem platform. The architecture uses a react frontend, node.js backend, Redis stream for inter-server messaging, and mysql for persistent logs. You can swap these components with any other language / framework / tool that achieves the same outcome.
 
-## Behaviors
+## Features
+
 - Real-time collaborative editing through WebSockets that can be hosted on multiple backend servers
-- Messages from different clients and servers synced through Redis stream
+- On login, users see:
+  - All currently active users
+  - All past messages
+  - Real-time updates as they occur
+- Messages from clients are distributed through Redis stream
 - Messages from Redis stream are backed up in a mysql database
-- Upon login, users can see all active users, all historical messages, and subscribe to real-time updates
-- Real-time conflict resolution if multiple users are editing the same cells
+- Real-time conflict resolution if multiple users edit the same cell
+- Automated system recovery (more details below)
 
-### If system fails, behaviors
-- If backend server fails:
-  - if client connects, client frontend shows error message + alerts; nothing gets logged in the backend or communicated to any client
-  - if active client, client frontend shows error message + alerts; need to manually error out client session in DB before server goes back on
-- If only DB fails:
-  - when client connects, should immediately see error message as they can't get all historical; client session closes immediately; redis logs error status
-  - if client is already connected, they can still continue to edit as if nothing happens
-  - accumulated messages will auto-save when DB is back on
-- If only Redis fails:
-  - All in-memory data not persisted to DB get lost
-  - client connects: see error message, client session immediately closes, error status gets logged to DB
-  - client already active: session closed, see error message; immediately marks all active client sessions in DB as error in DB
-  - Edge case: client opened but not yet persisted to DB; client session shutdown error persisted to DB - error status is logged to DB, and open status may be logged to DB if Redis did not lose all in-memory cache (DB would see some clients as open + error, some as only error)
-  - when Redis comes back up, automate reconnect; items in in-memory cache would sync to DB
-- If both DB and Redis fails:
-  - when client connects, error out, error gets logged somewhere to be persisted to DB when back up
-  - active clients get errored out, error gets logged somewhere to be persisted to DB when back up
-  - when Redis and DB comes back up, automatic reconnect; items in in-memory cache would sync to DB
+### System Failure Scenarios
 
-## Run the application
+Backend server fails:
+- **If client establishes a new connection:** Frontend shows error; session is not created.
+- **If client is in an active session:** User session terminates immediately.
+- **Recovery:** Active user sessions must be manually marked as errored in the DB before recovery.
 
-You may deploy and run the application anywhere (Kubernetes, EKS, RDS, etc.). For the sake of simplicity, this section outlines how to run the application locally.
+Database (MySQL) fails:
+- **If client establishes a new connection:** Fails immediately with error; session is not established; Redis logs failed connection attempt
+- **If client is in an active session:** Can continue editing. Changes queue in Redis until DB is back online.
+- **Recovery:** When DB recovers, queued changes auto-sync from Redis to DB.
 
-1. Start mysql
+Redis fails:
+- **If client establishes a new connection:** Fails with error; session rejected and failed connection attempt logged to DB.
+- **If client is in an active session:** Client session errors out; error gets logged to DB.
+- **Edge case:** Client started a session, but session open status is not yet persisted to DB. Meanwhile, Redis loses connection and client session errors out. The error is persisted to DB. In this case, some active clients may only have 'error' status in the DB.
+- **Recovery**: On reconnection, all items in Redis stream would be persisted to DB.
+  
+Both mysql and Redis fail:
+- **If client establishes a new connection:** Fails with error; session rejected and failed connection attempt logged to the backend server's in-memory store.
+- **If client is in an active session:** Client session errors out; error gets logged to the backend server's in-memory store.
+- **Recovery:** Once both Redis and DB are restored, reconnection and data sync are attempted automatically. Logs in in-memory store would persist to DB.
 
+## Running the application
 
+This system is designed for distributed deployment (e.g., Kubernetes, AWS ECS/EKS, GCP, RDS). However, it can also run locally using Docker.
 
-2. Start Redis
+To run the application locally, build and start the app with `docker-compose up --build` in the root directory of the project. Then, access the app by visiting `http://localhost:3000`.
 
+To tear down the Docker containers and volumes, run `docker-compose down -v`.
 
+### Environment Variable Configuration
 
-3. Run backend & frontend
+- All environment variables (MySQL, Redis, backend settings) are defined in docker-compose.yml.
+- Update values as needed for your cloud or local setup.
+- Inline comments in the Docker Compose file explain each variable.
 
-Run `docker-compose build` to build the images. You may change the env variables in `docker-compose.yml`.
+### Run in Development Mode (No Docker)
 
-Run `docker-compose up` to run the images. Then, access web page through `http://localhost:3000`.
+You may also run the app manually:
 
-Alternatively, instead of building the docker image, you may run the frontend & backend locally in dev mode simply with `npm start`. Make sure to install all the dependencies and export all the environment variables first.
+1. Ensure local instances of Redis and mysql are running.
+
+2. Install dependencies:
+```bash
+cd frontend && npm install
+cd backend && npm install
+```
+
+3. Export required environment variables:
+```bash
+export SQL_HOST=...
+export REDIS_HOST=...
+```
+
+4. Start frontend and backend separately:
+```bash
+cd frontend && npm start
+cd backend && npm start
+```
