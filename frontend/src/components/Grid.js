@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { DataContext } from '../context/DataContext';
 import Cell from './Cell';
 import StatusToggle from './StatusToggle';
+import ActivityToggle from './ActivityToggle';
 import { DEFAULT_DIMENSIONS } from '../constants/settings';
 import './style/Grid.css';
 
@@ -9,6 +10,7 @@ const Grid = () => {
   const { cellRefs, statusToggleRef, handleCellRender, error } = useContext(DataContext);
   const [rows, cols] = DEFAULT_DIMENSIONS;
   const [conflict, setConflict] = useState(null);
+  const [openActivityToggle, setOpenActivityToggle] = useState(false);
 
   // Initialize data values after Cell components render
   useEffect(() => {
@@ -17,18 +19,11 @@ const Grid = () => {
 
   const tableRows = [];
 
-  // // Show active users as icons
-  // if (initialUsers) {
-  //   Object.keys(initialUsers).forEach((user) => {
-  //     // TODO: show them as icons
-  //   });
-  // }
-
   const handleConflict = (rk, ck, value) => {
     setConflict({ rk, ck, value });
   };
 
-  // Create grid and populate with initial data
+  // Create grid with initial empty values
   for (let i = 0; i < rows; i++) {
     const tableCells = [];
     for (let j = 0; j < cols; j++) {
@@ -63,12 +58,27 @@ const Grid = () => {
 
   return (
     <div>
+      {/* Activity toggle setting */}
+      <button
+        className="arrow-toggle"
+        onClick={() => setOpenActivityToggle((prev) => !prev)}
+        aria-label="Toggle"
+      >
+        {openActivityToggle ? '>>' : '<<'}
+      </button>
+      {openActivityToggle && <ActivityToggle />}
+
+      {/* Status toggle setting */}
       <StatusToggle ref={statusToggleRef} />
+
+      {/* Grid main content */}
       <div className="grid-container">
         <table>
           <tbody>{tableRows}</tbody>
         </table>
       </div>
+
+      {/* Conflict resolution pop-up */}
       {conflict && (
         <div className="popup-overlay">
           <div className="popup">

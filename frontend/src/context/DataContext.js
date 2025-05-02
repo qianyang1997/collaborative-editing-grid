@@ -1,12 +1,13 @@
 /* eslint-disable react/prop-types */
 import React, { createContext, useCallback, useEffect, useRef, useState } from 'react';
-import { BACKEND_URL } from '../constants/settings';
+import { ACTIVITY_LOG_MAXLEN, BACKEND_URL } from '../constants/settings';
 
 const DataContext = createContext();
 
 const DataProvider = ({ children }) => {
   const [isPending, setIsPending] = useState(true);
   const [error, setError] = useState(null);
+  const [activityLog, setActivityLog] = useState([]);
   const ws = useRef(null);
   const statusToggleRef = useRef(null);
   const cellRefs = useRef({});
@@ -19,7 +20,7 @@ const DataProvider = ({ children }) => {
     // Skip websocket setup if cells are not rendered
     if (isPending) return;
 
-    ws.current = new WebSocket(`ws://${BACKEND_URL}`); // TODO: separate dev vs. prod
+    ws.current = new WebSocket(`ws://${BACKEND_URL}`);
 
     ws.current.onopen = () => {
       console.log('Connection to websocket established.');
@@ -31,28 +32,46 @@ const DataProvider = ({ children }) => {
       switch (data.type) {
         case 'USER':
           if (data.payload.status === 'open') {
-            // TODO: Add user icon at top
-            console.log(`${data.payload.user} is now online!`);
+            // Add user to activity log
+            setActivityLog((prev) => [
+              ...prev,
+              `${new Date().toLocaleString()}:\tUser ${data.payload.user} is now online.`
+            ]);
           }
           if (data.payload.status !== 'open') {
-            // TODO: drop user icon
-            console.log(`${data.payload.user} went offline.`);
+            setActivityLog((prev) => [
+              ...prev,
+              `${new Date().toLocaleString()}:\tUser ${data.payload.user} is now offline.`
+            ]);
           }
           break;
         case 'DATA':
           if (data.payload.data_type === 'user') {
-            // TODO: Populate active users upon initial sign in
-            // setInitialUsers(data.payload.message);
+            // Populate active users upon initial sign in
+            setActivityLog((prev) => [
+              ...prev,
+              `${new Date().toLocaleString()}:\tUsers currently online: ${Object.keys(data.payload.message)}.`
+            ]);
           } else if (data.payload.data_type === 'data') {
             // Populate current data upon initial sign in
             Object.entries(data.payload.message).forEach(([key, valueMap]) => {
               cellRefs.current[key].updateCellValue(valueMap.value);
+              setActivityLog((prev) => [
+                ...prev,
+                `${new Date().toLocaleString()}:\tCell ${key} was updated to value '${valueMap.value}' by user ${valueMap.user}.`
+              ]);
             });
           }
           break;
         case 'EDIT':
           cellRefs.current[`${data.payload.rowKey}-${data.payload.columnKey}`].updateCellValue(
             data.payload.value
+          );
+          setActivityLog((prev) =>
+            [
+              ...prev,
+              `${new Date().toLocaleString()}:\tCell ${data.payload.rowKey}-${data.payload.columnKey} was updated to value '${data.payload.value}' by user ${data.payload.user}.`
+            ].slice(-ACTIVITY_LOG_MAXLEN)
           );
           break;
         case 'SAVE':
@@ -101,7 +120,15 @@ const DataProvider = ({ children }) => {
 
   return (
     <DataContext.Provider
-      value={{ getCellValue, saveCellValue, cellRefs, statusToggleRef, handleCellRender, error }}
+      value={{
+        activityLog,
+        getCellValue,
+        saveCellValue,
+        cellRefs,
+        statusToggleRef,
+        handleCellRender,
+        error
+      }}
     >
       {children}
     </DataContext.Provider>

@@ -46,17 +46,54 @@ tr {
   background-color: #e0e0e0;
 }
 
-.save-status show {
-  position: relative;
-  display: inline-block;
-  width: 60px;
-  height: 34px;
+.arrow-toggle {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: grey;
+  color: white;
+  border: none;
+  border-radius: 5px 0 0 5px;
+  padding: 0.5rem 1rem;
+  font-size: 1.25rem;
+  cursor: pointer;
+  z-index: 1000;
+  transition: background-color 0.2s ease;
 }
 
-.save-status hide {
+.arrow-toggle:hover {
+  background-color: black;
+  color: white;
+}
+
+.save-status {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  width: auto;
+  padding: 10px 20px;
+  background-color: grey;
+  color: white;
+  border-radius: 5px;
+  font-size: 14px;
   opacity: 0;
-  width: 0;
-  height: 0;
+  pointer-events: none;
+  transition: all 0.4s ease;
+  z-index: 1000;
+}
+
+.save-status.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+
+.save-status.hide {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-20px);
+  pointer-events: none;
 }
 
 .popup-overlay {
@@ -76,4 +113,28 @@ tr {
   padding: 20px;
   border-radius: 8px;
   text-align: center;
+}
+
+.activity-log-overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 400px;
+  height: 100vh;
+  background-color: darkslategrey;
+  color: white;
+  padding: 1rem;
+  z-index: 999;
+  overflow-y: auto;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.5);
+}
+
+.activity-log-overlay h3 {
+  margin-top: 0;
+}
+
+.activity-log-overlay ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }

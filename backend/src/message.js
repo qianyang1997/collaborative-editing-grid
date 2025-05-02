@@ -316,8 +316,16 @@ const readInitialBatch = async (socket) => {
     processMessage(_, data, user_data, edit_data);
   });
 
-  socket.send(JSON.stringify({ type: 'DATA', payload: { data_type: 'user', message: user_data } }));
-  socket.send(JSON.stringify({ type: 'DATA', payload: { data_type: 'data', message: edit_data } }));
+  if (Object.keys(user_data).length) {
+    socket.send(
+      JSON.stringify({ type: 'DATA', payload: { data_type: 'user', message: user_data } })
+    );
+  }
+  if (Object.keys(edit_data).length) {
+    socket.send(
+      JSON.stringify({ type: 'DATA', payload: { data_type: 'data', message: edit_data } })
+    );
+  }
 
   return { status: 'success' };
 };
